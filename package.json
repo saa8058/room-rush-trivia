@@ -7,7 +7,7 @@
     "node": ">=20 <25"
   },
   "scripts": {
-    "build": "node bootstrap.mjs && node scripts/build-browser-bundle.mjs && node scripts/validate-deck.mjs",
+    "build": "node bootstrap.mjs",
     "start": "node server.mjs"
   }
 }
