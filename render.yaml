@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: room-rush-trivia
+    env: node
+    buildCommand: node bootstrap.mjs && node scripts/build-browser-bundle.mjs && node scripts/validate-deck.mjs
+    startCommand: node server.mjs
+    healthCheckPath: /healthz
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
