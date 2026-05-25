@@ -1,0 +1,13 @@
+{
+  "name": "room-rush-trivia-deploy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "scripts": {
+    "build": "node bootstrap.mjs && node scripts/build-browser-bundle.mjs && node scripts/validate-deck.mjs",
+    "start": "node server.mjs"
+  }
+}
