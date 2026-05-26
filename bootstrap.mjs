@@ -5,6 +5,11 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const previousBootstrapCommit = "18cb4ab934fb43b8820c3e6c764eb34a68db916e";
 const previousBootstrapUrl = `https://raw.githubusercontent.com/saa8058/room-rush-trivia/${previousBootstrapCommit}/bootstrap.mjs`;
+const brandCaseCss = `
+.rush-strip span:first-child {
+  text-transform: none;
+}
+`;
 
 async function loadPreviousBootstrap() {
   try {
@@ -51,6 +56,11 @@ function titleCaseBranding(content) {
 for (const file of textFiles) {
   const content = await readFile(file, "utf8");
   await writeFile(file, titleCaseBranding(content), "utf8");
+}
+
+const css = await readFile("src/styles.css", "utf8");
+if (!css.includes(".rush-strip span:first-child")) {
+  await writeFile("src/styles.css", `${css}${brandCaseCss}`, "utf8");
 }
 
 console.log("Restored launch files with Atwix Trivia branding.");
