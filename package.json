@@ -1,13 +1,17 @@
 {
-  "name": "room-rush-trivia-deploy",
+  "name": "atwix-trivia",
   "version": "0.1.0",
   "private": true,
+  "description": "A mobile-first multiplayer trivia party game for friends.",
   "type": "module",
+  "scripts": {
+    "build": "node scripts/build-browser-bundle.mjs && node scripts/validate-deck.mjs",
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "build:browser": "node scripts/build-browser-bundle.mjs",
+    "check": "node scripts/validate-deck.mjs"
+  },
   "engines": {
     "node": ">=20 <25"
-  },
-  "scripts": {
-    "build": "node bootstrap.mjs",
-    "start": "node server.mjs"
   }
 }

@@ -1,0 +1,26 @@
+{
+  "name": "Atwix Trivia",
+  "short_name": "Atwix",
+  "description": "A fast multiplayer trivia party game for friends.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090b18",
+  "theme_color": "#090b18",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/public/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/public/icons/maskable-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
