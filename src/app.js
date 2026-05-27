@@ -15,18 +15,21 @@ import {
   getCurrentQuestionId,
   getPlayerResult,
   getRoundResult,
-  joinRoom,
-  nextQuestion,
-  playAgain,
-  readRoom,
-  recoverPlayer,
-  showLeaderboard,
-  startGame,
-  submitAnswer,
-  subscribeToRoom,
-  tickRoom,
-  updateSettings
-} from "./storage.js";
+	  joinRoom,
+	  nextQuestion,
+	  playAgain,
+	  readRoom,
+	  recoverPlayer,
+	  reportQuestion,
+	  setLobbyReady,
+	  showLeaderboard,
+	  startGame,
+	  submitAnswer,
+	  subscribeToRoom,
+	  tickRoom,
+	  transferHost,
+	  updateSettings
+	} from "./storage.js";
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
@@ -44,10 +47,11 @@ let state = {
   loading: false,
   unsubscribe: null,
   timer: null,
-  localChoices: new Map(),
-  pendingAnswerKey: "",
-  audioEvents: new Set(),
-  installPrompt: null,
+	  localChoices: new Map(),
+	  pendingAnswerKey: "",
+	  audioEvents: new Set(),
+	  connection: "idle",
+	  installPrompt: null,
   canInstall: false,
   installDismissed: localStorage.getItem("room-rush-install-dismissed") === "true"
 };
@@ -110,16 +114,23 @@ function renderCurrentView() {
 function screenLayout(content) {
   return `
     <section class="screen">
-      <div class="rush-strip" aria-hidden="true">
-        <span>Atwix</span>
-        <span>Fast fingers</span>
-        <span>Big points</span>
-      </div>
-      ${renderAudioControls()}
-      ${state.error ? `<div class="error-banner"><strong>${escapeHtml(getPhrase("errorHelper", state.error))}</strong><span>${escapeHtml(state.error)}</span></div>` : ""}
-      ${content}
-    </section>
-  `;
+	      <div class="rush-strip" aria-hidden="true">
+	        <span>Atwix</span>
+	        <span>Fast fingers</span>
+	        <span>Big points</span>
+	      </div>
+	      ${renderAudioControls()}
+	      ${renderConnectionStatus()}
+	      ${state.error ? `<div class="error-banner"><strong>${escapeHtml(getPhrase("errorHelper", state.error))}</strong><span>${escapeHtml(state.error)}</span></div>` : ""}
+	      ${content}
+	    </section>
+	  `;
+	}
+
+function renderConnectionStatus() {
+  if (!state.room || state.connection === "idle") return "";
+  const label = state.connection === "live" ? "Connected" : "Reconnecting";
+  return `<div class="connection-pill ${state.connection}">${label}</div>`;
 }
 
 function renderAudioControls() {
@@ -202,6 +213,12 @@ function renderJoin() {
 
 function renderLobby() {
   const isHost = isCurrentHost();
+  const ready = state.room.lobbyReady || {};
+  const currentReady = Boolean(ready[state.currentPlayer.id]);
+  const readyCount = state.room.players.filter((player) => ready[player.id]).length;
+  const allReady = state.room.players.length >= 2 && readyCount === state.room.players.length;
+  const hostOnline = isPlayerOnline(state.room.hostId);
+  const canClaimHost = !isHost && !hostOnline;
   return `
     <div class="topbar">
       <div>
@@ -211,34 +228,49 @@ function renderLobby() {
       <button class="ghost-button" data-copy="${escapeAttr(state.room.inviteUrl)}">Copy Link</button>
     </div>
     ${renderInstallCard("lobby")}
-    <section class="panel room-card">
+    <section class="panel room-card invite-card">
+      <div>
+        <p class="eyebrow">Invite screen</p>
+        <h3>Share this with your brothers.</h3>
+        <p class="helper">The link opens this exact room on any phone or laptop.</p>
+      </div>
       <div class="room-code-block">
         <span>Room code</span>
         <strong>${state.room.code}</strong>
       </div>
       <div class="share-row">
+        <button class="primary-button" id="share-button">Share with brothers</button>
         <button class="secondary-button" data-copy="${escapeAttr(state.room.inviteUrl)}">Copy invite link</button>
-        <button class="secondary-button" id="share-button">Share</button>
       </div>
     </section>
     <section class="panel">
       <div class="section-title">
         <h3>Players</h3>
-        <span>${state.room.players.length}/12</span>
+        <span>${readyCount}/${state.room.players.length} ready</span>
       </div>
       <div class="player-list">
         ${state.room.players.map((player) => `
           <div class="player-pill">
             <span>${escapeHtml(player.displayName)}${player.id === state.currentPlayer.id ? " <small>You</small>" : ""}</span>
-            ${player.id === state.room.hostId ? `<strong>Host</strong>` : ""}
+            <span class="pill-actions">
+              ${isPlayerOnline(player.id) ? `<small>Online</small>` : `<small>Offline</small>`}
+              ${ready[player.id] ? `<strong>Ready</strong>` : `<strong>Not yet</strong>`}
+              ${player.id === state.room.hostId ? `<strong>Host</strong>` : ""}
+              ${isHost && player.id !== state.currentPlayer.id ? `<button class="mini-button" data-transfer-host="${escapeAttr(player.id)}">Make host</button>` : ""}
+            </span>
           </div>
         `).join("")}
       </div>
+      <div class="lobby-actions">
+        <button class="${currentReady ? "secondary-button" : "primary-button"} wide" id="lobby-ready">${currentReady ? "Ready locked" : "I'm Ready"}</button>
+        ${canClaimHost ? `<button class="secondary-button wide" id="claim-host">Become Host</button>` : ""}
+      </div>
+      ${!hostOnline && !isHost ? `<p class="inline-note">The host looks offline. You can become host and keep the room moving.</p>` : ""}
     </section>
     <section class="panel">
       <div class="section-title">
         <h3>Game setup</h3>
-        <span>${isHost ? "Host controls" : "Waiting"}</span>
+        <span>${isHost ? allReady ? "Ready to start" : "Waiting for ready" : "Waiting"}</span>
       </div>
       ${isHost ? renderSettingsForm() : `<p class="helper">${escapeHtml(getPhrase("waitingForHost", state.room.code))}</p>`}
     </section>
@@ -255,9 +287,13 @@ function renderSettingsForm() {
         </select>
       </label>
       <label>
-        <span>Timer</span>
-        <select name="timerSeconds">
-          ${[10, 15, 20, 30].map((value) => `<option value="${value}" ${state.room.settings.timerSeconds === value ? "selected" : ""}>${value}s</option>`).join("")}
+        <span>Pacing</span>
+        <select name="pacingMode">
+          ${[
+            ["Relaxed", "Relaxed · 20s"],
+            ["Normal", "Normal · 15s"],
+            ["Fast", "Fast · 10s"]
+          ].map(([value, label]) => `<option value="${value}" ${currentPacingMode() === value ? "selected" : ""}>${label}</option>`).join("")}
         </select>
       </label>
       <label class="wide-field">
@@ -266,7 +302,7 @@ function renderSettingsForm() {
           ${CATEGORY_MODES.map((mode) => `<option value="${escapeAttr(mode)}" ${state.room.settings.categoryMode === mode ? "selected" : ""}>${escapeHtml(mode)}</option>`).join("")}
         </select>
       </label>
-      <button class="primary-button wide-field" id="start-game" type="button" ${state.room.players.length < 2 ? "disabled" : ""}>Start Game</button>
+      <button class="primary-button wide-field" id="start-game" type="button" ${!canStartFromLobby() ? "disabled" : ""}>Start Game</button>
     </form>
   `;
 }
@@ -391,11 +427,11 @@ function renderReveal() {
         }).join("")}
       </div>
     </section>
-    <section class="panel">
-      <div class="section-title">
-        <h3>Player answers</h3>
-        <span>${fastest ? `Fastest: ${escapeHtml(fastest)}` : "No correct answers"}</span>
-      </div>
+	    <section class="panel">
+	      <div class="section-title">
+	        <h3>Player answers</h3>
+	        <span>${fastest ? `Fastest: ${escapeHtml(fastest)}` : "No correct answers"}</span>
+	      </div>
       <div class="points-list">
         ${result.playerResults.map((item) => `
           <div>
@@ -407,11 +443,24 @@ function renderReveal() {
             <strong>${item.points}</strong>
           </div>
         `).join("")}
-      </div>
-      ${isCurrentHost() ? `<button class="primary-button wide" id="show-leaderboard">Show Leaderboard</button>` : `<p class="helper">${escapeHtml(getPhrase("waitingForHost", `reveal:${roundPhraseKey()}`))}</p>`}
-    </section>
-  `;
-}
+	      </div>
+	      ${isCurrentHost() ? `<button class="primary-button wide" id="show-leaderboard">Show Leaderboard</button>` : `<p class="helper">${escapeHtml(getPhrase("waitingForHost", `reveal:${roundPhraseKey()}`))}</p>`}
+	    </section>
+	    <section class="panel">
+	      <div class="section-title">
+	        <h3>Question report</h3>
+	        <span>${hasReportedQuestion() ? "Sent" : "Optional"}</span>
+	      </div>
+	      <p class="helper">${hasReportedQuestion() ? "Thanks. This question is marked for review." : "Flag a question if something felt off."}</p>
+	      <div class="report-actions">
+	        <button class="ghost-button" data-report="too_easy" ${hasReportedQuestion("too_easy") ? "disabled" : ""}>Too easy</button>
+	        <button class="ghost-button" data-report="wrong_answer" ${hasReportedQuestion("wrong_answer") ? "disabled" : ""}>Wrong answer</button>
+	        <button class="ghost-button" data-report="repeated" ${hasReportedQuestion("repeated") ? "disabled" : ""}>Repeated</button>
+	        <button class="ghost-button" data-report="unclear" ${hasReportedQuestion("unclear") ? "disabled" : ""}>Unclear</button>
+	      </div>
+	    </section>
+	  `;
+	}
 
 function renderLeaderboard() {
   const leaderboard = state.room.lastLeaderboard || [];
@@ -470,14 +519,10 @@ function renderFinal() {
         <h3>Fun awards</h3>
         <span>Group chat material</span>
       </div>
-      <div class="awards-grid">
-        ${renderAward("Winner", awards.winnerId)}
-        ${renderAward("Fastest Thinker", awards.fastestThinkerId)}
-        ${renderAward("Best Comeback", awards.bestComebackId)}
-        ${renderAward("Longest Streak", awards.longestStreakId)}
-        ${renderAward("Most Confidently Wrong", awards.mostConfidentlyWrongId)}
-      </div>
-    </section>
+	      <div class="awards-grid">
+	        ${renderAwardCards(awards)}
+	      </div>
+	    </section>
     <div class="summary-actions">
       ${isCurrentHost() ? `<button class="secondary-button" id="play-again">Play Again</button>` : ""}
       <button class="primary-button" data-view="create">New Room</button>
@@ -639,6 +684,23 @@ function renderAward(label, playerId) {
   return `<div class="award"><span>${escapeHtml(label)}</span><strong>${escapeHtml(playerName(playerId) || "—")}</strong></div>`;
 }
 
+function renderAwardCards(awards) {
+  const cards = awards.cards || [
+    { label: "Winner", playerId: awards.winnerId, detail: "Top score." },
+    { label: "Fastest Answer", playerId: awards.fastestThinkerId, detail: "Fastest correct answers." },
+    { label: "Biggest Comeback", playerId: awards.bestComebackId, detail: "Best single-round jump." },
+    { label: "Longest Streak", playerId: awards.longestStreakId, detail: "Most answers in a row." },
+    { label: "Most Chaotic Guess", playerId: awards.mostConfidentlyWrongId, detail: "Most bold misses." }
+  ];
+  return cards.map((award) => `
+    <div class="award detailed-award">
+      <span>${escapeHtml(award.label)}</span>
+      <strong>${escapeHtml(playerName(award.playerId) || "—")}</strong>
+      <small>${escapeHtml(award.detail || "")}</small>
+    </div>
+  `).join("");
+}
+
 function bindActions() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -649,10 +711,11 @@ function bindActions() {
       state.currentPlayer = null;
       state.playerId = "";
       state.error = "";
-      state.pendingAnswerKey = "";
-      state.localChoices.clear();
-      state.audioEvents.clear();
-      stopAllAudio();
+	      state.pendingAnswerKey = "";
+	      state.localChoices.clear();
+	      state.audioEvents.clear();
+	      state.connection = "idle";
+	      stopAllAudio();
       history.replaceState({}, "", window.location.pathname);
       render();
     });
@@ -675,18 +738,42 @@ function bindActions() {
     event.target.value = state.joinCode;
   });
 
-  document.querySelector("#settings-form")?.addEventListener("change", handleSettingsChange);
-  document.querySelector("#start-game")?.addEventListener("click", () => safely(async () => {
-    state.room = await startGame(state.room.code, state.currentPlayer.id);
-    render();
+	  document.querySelector("#settings-form")?.addEventListener("change", handleSettingsChange);
+	  document.querySelector("#lobby-ready")?.addEventListener("click", () => safely(async () => {
+	    state.room = await setLobbyReady(state.room.code, state.currentPlayer.id, true);
+	    showToast("Ready locked.");
+	    render();
+	  }));
+	  document.querySelector("#claim-host")?.addEventListener("click", () => safely(async () => {
+	    state.room = await transferHost(state.room.code, state.currentPlayer.id);
+	    showToast("You are host now.");
+	    render();
+	  }));
+	  document.querySelectorAll("[data-transfer-host]").forEach((button) => {
+	    button.addEventListener("click", () => safely(async () => {
+	      state.room = await transferHost(state.room.code, state.currentPlayer.id, button.dataset.transferHost);
+	      showToast("Host handed off.");
+	      render();
+	    }));
+	  });
+	  document.querySelector("#start-game")?.addEventListener("click", () => safely(async () => {
+	    state.room = await startGame(state.room.code, state.currentPlayer.id);
+	    render();
   }));
   document.querySelectorAll("[data-choice]").forEach((button) => {
     button.addEventListener("click", () => handleAnswerSelect(Number(button.dataset.choice)));
   });
-  document.querySelector("#show-leaderboard")?.addEventListener("click", () => safely(async () => {
-    state.room = await showLeaderboard(state.room.code, state.currentPlayer.id);
-    render();
-  }));
+	  document.querySelector("#show-leaderboard")?.addEventListener("click", () => safely(async () => {
+	    state.room = await showLeaderboard(state.room.code, state.currentPlayer.id);
+	    render();
+	  }));
+	  document.querySelectorAll("[data-report]").forEach((button) => {
+	    button.addEventListener("click", () => safely(async () => {
+	      state.room = await reportQuestion(state.room.code, state.currentPlayer.id, getCurrentQuestionId(state.room), button.dataset.report);
+	      showToast("Question report sent.");
+	      render();
+	    }));
+	  });
   document.querySelector("#next-question")?.addEventListener("click", () => safely(async () => {
     state.room = await nextQuestion(state.room.code, state.currentPlayer.id);
     render();
@@ -751,11 +838,11 @@ async function handleJoin(event) {
 async function handleSettingsChange(event) {
   const form = new FormData(event.currentTarget);
   await safely(async () => {
-    state.room = await updateSettings(state.room.code, state.currentPlayer.id, {
-      roundCount: Number(form.get("roundCount")),
-      timerSeconds: Number(form.get("timerSeconds")),
-      categoryMode: form.get("categoryMode")
-    });
+	    state.room = await updateSettings(state.room.code, state.currentPlayer.id, {
+	      roundCount: Number(form.get("roundCount")),
+	      pacingMode: form.get("pacingMode"),
+	      categoryMode: form.get("categoryMode")
+	    });
     render();
   });
 }
@@ -764,9 +851,9 @@ async function handleShare() {
   if (navigator.share) {
     try {
       await navigator.share({
-        title: "Atwix Trivia",
-        text: "Join my trivia room.",
-        url: state.room.inviteUrl
+	        title: "Atwix Trivia",
+	        text: `Join my Atwix Trivia room ${state.room.code}.`,
+	        url: state.room.inviteUrl
       });
     } catch {
       showToast("Share canceled.");
@@ -834,7 +921,8 @@ async function handleAnswerSelect(choiceIndex) {
 
 function connectRoom(code) {
   state.unsubscribe?.();
-  state.unsubscribe = subscribeToRoom(code, (room) => {
+  state.connection = "connecting";
+  state.unsubscribe = subscribeToRoom(code, state.currentPlayer?.id, (room) => {
     const previousStatus = state.room?.status || "";
     state.room = room;
     state.currentPlayer = recoverPlayer(room, state.currentPlayer?.id) || state.currentPlayer;
@@ -845,6 +933,11 @@ function connectRoom(code) {
     }
     render();
     handleRoomAudio();
+  }, (connection) => {
+    const wasReconnecting = state.connection === "reconnecting";
+    state.connection = connection;
+    if (connection === "live" && wasReconnecting) showToast("Reconnected to the room.");
+    render();
   });
 
   clearInterval(state.timer);
@@ -945,6 +1038,32 @@ function playerAnswerLabel(question, result) {
 
 function isCurrentHost() {
   return state.currentPlayer?.id === state.room?.hostId;
+}
+
+function isPlayerOnline(playerId) {
+  return Boolean(state.room?.presence?.[playerId]?.connected);
+}
+
+function canStartFromLobby() {
+  if (!state.room || state.room.players.length < 2) return false;
+  const ready = state.room.lobbyReady || {};
+  return state.room.players.every((player) => ready[player.id]);
+}
+
+function currentPacingMode() {
+  if (state.room?.settings?.pacingMode) return state.room.settings.pacingMode;
+  const seconds = state.room?.settings?.timerSeconds;
+  if (seconds >= 20) return "Relaxed";
+  if (seconds <= 10) return "Fast";
+  return "Normal";
+}
+
+function hasReportedQuestion(reason = null) {
+  const questionId = getCurrentQuestionId(state.room);
+  return Boolean(state.room?.questionReports?.some((report) => {
+    if (report.playerId !== state.currentPlayer?.id || report.questionId !== questionId) return false;
+    return reason ? report.reason === reason : true;
+  }));
 }
 
 function playerName(playerId) {
