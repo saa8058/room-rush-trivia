@@ -1,5 +1,6 @@
 const TAB_PLAYER_PREFIX = "room-rush-player:";
 const SAVED_PLAYER_PREFIX = "atwix-player:";
+const LAST_ROOM_KEY = "atwix-last-room";
 
 export const partyLines = [
   "Leaderboard drama incoming.",
@@ -99,6 +100,19 @@ export async function reportQuestion(code, playerId, questionId, reason) {
   })).room;
 }
 
+export async function leaveRoom(code, playerId) {
+  const normalized = normalizeCode(code);
+  const room = (await api(
+    "/api/rooms/" + normalized + "/leave",
+    {
+      method: "POST",
+      body: { playerId }
+    }
+  )).room;
+  clearSavedPlayerId(normalized);
+  return room;
+}
+
 export async function playAgain(code, playerId) {
   return (await api(`/api/rooms/${normalizeCode(code)}/play-again`, {
     method: "POST",
@@ -167,4 +181,15 @@ function getTabPlayerId(code) {
 function setTabPlayerId(code, playerId) {
   sessionStorage.setItem(`${TAB_PLAYER_PREFIX}${code}`, playerId);
   localStorage.setItem(`${SAVED_PLAYER_PREFIX}${code}`, playerId);
+  localStorage.setItem(LAST_ROOM_KEY, code);
+}
+
+function clearSavedPlayerId(code) {
+  sessionStorage.removeItem(`${TAB_PLAYER_PREFIX}${code}`);
+  localStorage.removeItem(`${SAVED_PLAYER_PREFIX}${code}`);
+  if (localStorage.getItem(LAST_ROOM_KEY) === code) localStorage.removeItem(LAST_ROOM_KEY);
+}
+
+export function getSavedRoomCode() {
+  return localStorage.getItem(LAST_ROOM_KEY) || "";
 }
