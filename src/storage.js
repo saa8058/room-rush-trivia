@@ -1,4 +1,5 @@
 const TAB_PLAYER_PREFIX = "room-rush-player:";
+const SAVED_PLAYER_PREFIX = "atwix-player:";
 
 export const partyLines = [
   "Leaderboard drama incoming.",
@@ -45,6 +46,20 @@ export async function updateSettings(code, playerId, settings) {
   })).room;
 }
 
+export async function setLobbyReady(code, playerId, ready) {
+  return (await api(`/api/rooms/${normalizeCode(code)}/lobby-ready`, {
+    method: "POST",
+    body: { playerId, ready }
+  })).room;
+}
+
+export async function transferHost(code, playerId, targetPlayerId = playerId) {
+  return (await api(`/api/rooms/${normalizeCode(code)}/transfer-host`, {
+    method: "POST",
+    body: { playerId, targetPlayerId }
+  })).room;
+}
+
 export async function startGame(code, playerId) {
   return (await api(`/api/rooms/${normalizeCode(code)}/start`, {
     method: "POST",
@@ -77,6 +92,13 @@ export async function nextQuestion(code, playerId) {
   })).room;
 }
 
+export async function reportQuestion(code, playerId, questionId, reason) {
+  return (await api(`/api/rooms/${normalizeCode(code)}/report-question`, {
+    method: "POST",
+    body: { playerId, questionId, reason }
+  })).room;
+}
+
 export async function playAgain(code, playerId) {
   return (await api(`/api/rooms/${normalizeCode(code)}/play-again`, {
     method: "POST",
@@ -84,13 +106,15 @@ export async function playAgain(code, playerId) {
   })).room;
 }
 
-export function subscribeToRoom(code, callback) {
+export function subscribeToRoom(code, playerId, callback, onStatus = () => {}) {
   const normalized = normalizeCode(code);
   if (!("EventSource" in window)) return () => {};
 
-  const source = new EventSource(`/api/rooms/${normalized}/events`);
+  const query = playerId ? `?player=${encodeURIComponent(playerId)}` : "";
+  const source = new EventSource(`/api/rooms/${normalized}/events${query}`);
+  source.onopen = () => onStatus("live");
   source.addEventListener("room", (event) => callback(JSON.parse(event.data)));
-  source.onerror = () => {};
+  source.onerror = () => onStatus("reconnecting");
   return () => source.close();
 }
 
@@ -137,9 +161,10 @@ function normalizeCode(value) {
 }
 
 function getTabPlayerId(code) {
-  return sessionStorage.getItem(`${TAB_PLAYER_PREFIX}${code}`);
+  return sessionStorage.getItem(`${TAB_PLAYER_PREFIX}${code}`) || localStorage.getItem(`${SAVED_PLAYER_PREFIX}${code}`);
 }
 
 function setTabPlayerId(code, playerId) {
   sessionStorage.setItem(`${TAB_PLAYER_PREFIX}${code}`, playerId);
+  localStorage.setItem(`${SAVED_PLAYER_PREFIX}${code}`, playerId);
 }
