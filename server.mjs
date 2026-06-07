@@ -35,8 +35,17 @@ const types = {
 const defaultSettings = {
   roundCount: 10,
   timerSeconds: 15,
+  pacingMode: "Normal",
   categoryMode: "Mixed Party"
 };
+
+const pacingSeconds = {
+  Fast: 10,
+  Normal: 15,
+  Relaxed: 20
+};
+
+const reportReasons = new Set(["too_easy", "wrong_answer", "repeated", "unclear"]);
 
 function resolveStaticPath(url) {
   const pathname = new URL(url, `http://localhost:${port}`).pathname;
@@ -150,7 +159,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && parts[3] === "events") {
-    openRoomStream(req, res, room);
+    openRoomStream(req, res, room, url);
     return;
   }
 
@@ -159,13 +168,18 @@ async function handleApi(req, res, url) {
   const body = await readJson(req);
   let payload;
 
+  if (body.playerId) markPlayerSeen(room, body.playerId);
+
   if (parts[3] === "join") payload = joinRoom(room, body.displayName, body.playerId);
   else if (parts[3] === "settings") payload = { room: updateSettings(room, body.playerId, body.settings) };
+  else if (parts[3] === "lobby-ready") payload = { room: setLobbyReady(room, body.playerId, body.ready) };
+  else if (parts[3] === "transfer-host") payload = { room: transferHost(room, body.playerId, body.targetPlayerId) };
   else if (parts[3] === "start") payload = { room: startGame(room, body.playerId) };
   else if (parts[3] === "answer") payload = { room: submitAnswer(room, body.playerId, body.choiceIndex) };
   else if (parts[3] === "tick") payload = { room };
   else if (parts[3] === "show-leaderboard") payload = { room: showLeaderboard(room, body.playerId) };
   else if (parts[3] === "next") payload = { room: nextQuestion(room, body.playerId) };
+  else if (parts[3] === "report-question") payload = { room: reportQuestion(room, body.playerId, body.questionId, body.reason) };
   else if (parts[3] === "play-again") payload = { room: playAgain(room, body.playerId) };
   else throw httpError(404, "Unknown room action.");
 
@@ -241,27 +255,33 @@ function createRoom(displayName, req) {
     stats: { [player.id]: createStats() },
     previousLeaderboard: [],
     lastLeaderboard: [],
-    roundResults: [],
-    nextReady: {},
-    createdAt: now,
-    updatedAt: now
-  };
+	    roundResults: [],
+	    nextReady: {},
+	    lobbyReady: {},
+	    questionReports: [],
+	    presence: {
+	      [player.id]: { connected: false, connections: 0, lastSeen: now }
+	    },
+	    createdAt: now,
+	    updatedAt: now
+	  };
 
   rooms.set(code, room);
   return { room, player };
 }
 
 function joinRoom(room, displayName, playerId) {
-  if (room.status !== "lobby") throw httpError(409, "That game already started. Join the next one.");
-
   const cleanName = normalizeName(displayName);
   if (!cleanName) throw httpError(400, "Add your display name first.");
 
   const existing = room.players.find((player) => player.id === playerId);
   if (existing) {
     existing.displayName = cleanName;
+    markPlayerSeen(room, existing.id);
     return { room, player: existing };
   }
+
+  if (room.status !== "lobby") throw httpError(409, "That game already started. Join the next one.");
 
   if (room.players.length >= 12) throw httpError(409, "That room is full. Max 12 players.");
 
@@ -270,6 +290,10 @@ function joinRoom(room, displayName, playerId) {
   room.scores[player.id] = 0;
   room.streaks[player.id] = 0;
   room.stats[player.id] = createStats();
+  room.lobbyReady ||= {};
+  room.lobbyReady[player.id] = false;
+  room.presence ||= {};
+  room.presence[player.id] = { connected: false, connections: 0, lastSeen: Date.now() };
   return { room, player };
 }
 
@@ -278,14 +302,38 @@ function updateSettings(room, playerId, settings = {}) {
   if (room.status !== "lobby") throw httpError(409, "Settings can only change before the game starts.");
 
   const roundCount = Number(settings.roundCount);
-  const timerSeconds = Number(settings.timerSeconds);
+  const pacingMode = String(settings.pacingMode || settings.pace || "Normal");
+  const timerSeconds = pacingSeconds[pacingMode] || Number(settings.timerSeconds);
   const categoryMode = String(settings.categoryMode || "");
 
   if (![5, 10, 15, 20, 30].includes(roundCount)) throw httpError(400, "Choose 5, 10, 15, 20, or 30 rounds.");
-  if (![10, 15, 20, 30].includes(timerSeconds)) throw httpError(400, "Choose a 10, 15, 20, or 30 second timer.");
+  if (!Object.keys(pacingSeconds).includes(pacingMode)) throw httpError(400, "Choose Fast, Normal, or Relaxed pacing.");
   if (!CATEGORY_MODES.includes(categoryMode)) throw httpError(400, "Choose a valid category mode.");
 
-  room.settings = { roundCount, timerSeconds, categoryMode };
+  room.settings = { roundCount, timerSeconds, pacingMode, categoryMode };
+  return room;
+}
+
+function setLobbyReady(room, playerId, ready = true) {
+  if (room.status !== "lobby") throw httpError(409, "Lobby ready only applies before the game starts.");
+  if (!room.players.some((player) => player.id === playerId)) throw httpError(403, "Rejoin the room to ready up.");
+  room.lobbyReady ||= {};
+  room.lobbyReady[playerId] = Boolean(ready);
+  return room;
+}
+
+function transferHost(room, playerId, targetPlayerId) {
+  const actingPlayer = room.players.find((player) => player.id === playerId);
+  if (!actingPlayer) throw httpError(403, "Rejoin the room to manage host.");
+  const hostOnline = isPlayerConnected(room, room.hostId);
+  const targetId = targetPlayerId || playerId;
+  const target = room.players.find((player) => player.id === targetId);
+  if (!target) throw httpError(400, "Pick a player in this room.");
+  if (room.hostId !== playerId && hostOnline) throw httpError(403, "Only the host can hand that off.");
+  if (room.hostId !== playerId && targetId !== playerId) throw httpError(403, "You can only claim host for yourself.");
+  room.hostId = target.id;
+  room.lobbyReady ||= {};
+  room.lobbyReady[target.id] = true;
   return room;
 }
 
@@ -293,6 +341,8 @@ function startGame(room, playerId) {
   assertHost(room, playerId);
   if (room.status !== "lobby") return room;
   if (room.players.length < 2) throw httpError(409, "You need at least 2 players.");
+  const ready = currentLobbyReadyMap(room);
+  if (!room.players.every((player) => ready[player.id])) throw httpError(409, "Everyone needs to tap Ready first.");
 
   resetGameStats(room);
   room.selectedQuestionIds = selectQuestions(room.settings);
@@ -368,6 +418,27 @@ function nextQuestion(room, playerId) {
   return room;
 }
 
+function reportQuestion(room, playerId, questionId, reason) {
+  if (!room.players.some((player) => player.id === playerId)) throw httpError(403, "Rejoin the room to report a question.");
+  const cleanReason = String(reason || "");
+  if (!reportReasons.has(cleanReason)) throw httpError(400, "Choose a valid report reason.");
+  const id = String(questionId || room.selectedQuestionIds[room.currentRoundIndex] || "");
+  if (!room.selectedQuestionIds.includes(id)) throw httpError(400, "That question is not in this game.");
+
+  room.questionReports ||= [];
+  const alreadyReported = room.questionReports.some((report) => report.playerId === playerId && report.questionId === id && report.reason === cleanReason);
+  if (!alreadyReported) {
+    room.questionReports.push({
+      playerId,
+      questionId: id,
+      reason: cleanReason,
+      roundIndex: room.currentRoundIndex,
+      createdAt: Date.now()
+    });
+  }
+  return room;
+}
+
 function playAgain(room, playerId) {
   assertHost(room, playerId);
   room.status = "lobby";
@@ -381,6 +452,7 @@ function playAgain(room, playerId) {
   room.lastLeaderboard = [];
   room.finalAwards = null;
   room.nextReady = {};
+  room.lobbyReady = {};
   resetGameStats(room);
   return room;
 }
@@ -517,17 +589,57 @@ function buildAwards(room) {
   const leaderboard = buildLeaderboard(room);
   const statsEntries = activePlayers(room).map((player) => ({ player, stats: room.stats[player.id] || createStats() }));
   const by = (selector) => [...statsEntries].sort((a, b) => selector(b) - selector(a))[0]?.player.id || null;
+  const fastestId = by((entry) => entry.stats.fastestCorrectCount);
+  const comebackId = by((entry) => entry.stats.bestRoundGain);
+  const streakId = by((entry) => entry.stats.longestStreak);
+  const wrongId = by((entry) => entry.stats.wrongAnswers);
   return {
     winnerId: leaderboard[0]?.playerId || null,
-    fastestThinkerId: by((entry) => entry.stats.fastestCorrectCount),
-    bestComebackId: by((entry) => entry.stats.bestRoundGain),
-    longestStreakId: by((entry) => entry.stats.longestStreak),
-    mostConfidentlyWrongId: by((entry) => entry.stats.wrongAnswers)
+    fastestThinkerId: fastestId,
+    bestComebackId: comebackId,
+    longestStreakId: streakId,
+    mostConfidentlyWrongId: wrongId,
+    cards: [
+      {
+        label: "Winner",
+        playerId: leaderboard[0]?.playerId || null,
+        detail: leaderboard[0] ? `${leaderboard[0].totalPoints} points at the top.` : "No winner this time."
+      },
+      {
+        label: "Fastest Answer",
+        playerId: fastestId,
+        detail: awardDetail(room, fastestId, "fastestCorrectCount", "fastest correct answer")
+      },
+      {
+        label: "Biggest Comeback",
+        playerId: comebackId,
+        detail: awardDetail(room, comebackId, "bestRoundGain", "points in one round")
+      },
+      {
+        label: "Longest Streak",
+        playerId: streakId,
+        detail: awardDetail(room, streakId, "longestStreak", "correct in a row")
+      },
+      {
+        label: "Most Chaotic Guess",
+        playerId: wrongId,
+        detail: awardDetail(room, wrongId, "wrongAnswers", "bold misses")
+      }
+    ]
   };
+}
+
+function awardDetail(room, playerId, statKey, suffix) {
+  if (!playerId) return "Nobody claimed this one.";
+  const value = room.stats[playerId]?.[statKey] || 0;
+  if (!value) return "The room kept this category quiet.";
+  return `${value} ${suffix}.`;
 }
 
 function publicRoom(room) {
   const copy = structuredClone(room);
+  copy.lobbyReady = currentLobbyReadyMap(copy);
+  copy.presence = publicPresence(copy);
   if (copy.status === "question") {
     const questionId = copy.selectedQuestionIds[copy.currentRoundIndex];
     const answers = copy.answers[questionId] || {};
@@ -643,6 +755,70 @@ function currentReadyMap(room) {
   return room.nextReady;
 }
 
+function currentLobbyReadyMap(room) {
+  room.lobbyReady ||= {};
+  const playerIds = new Set(room.players.map((player) => player.id));
+  for (const playerId of Object.keys(room.lobbyReady)) {
+    if (!playerIds.has(playerId)) delete room.lobbyReady[playerId];
+  }
+  for (const player of room.players) {
+    room.lobbyReady[player.id] = Boolean(room.lobbyReady[player.id]);
+  }
+  return room.lobbyReady;
+}
+
+function markPlayerSeen(room, playerId, connected = null) {
+  if (!room?.players?.some((player) => player.id === playerId)) return;
+  room.presence ||= {};
+  const current = room.presence[playerId] || { connected: false, connections: 0, lastSeen: 0 };
+  room.presence[playerId] = {
+    ...current,
+    connected: connected === null ? current.connected : connected,
+    lastSeen: Date.now()
+  };
+}
+
+function addPlayerConnection(room, playerId) {
+  if (!room.players.some((player) => player.id === playerId)) return false;
+  room.presence ||= {};
+  const current = room.presence[playerId] || { connected: false, connections: 0, lastSeen: 0 };
+  room.presence[playerId] = {
+    ...current,
+    connected: true,
+    connections: (current.connections || 0) + 1,
+    lastSeen: Date.now()
+  };
+  return true;
+}
+
+function removePlayerConnection(room, playerId) {
+  if (!room?.presence?.[playerId]) return;
+  const current = room.presence[playerId];
+  const connections = Math.max(0, (current.connections || 0) - 1);
+  room.presence[playerId] = {
+    ...current,
+    connections,
+    connected: connections > 0,
+    lastSeen: Date.now()
+  };
+}
+
+function isPlayerConnected(room, playerId) {
+  return Boolean(room.presence?.[playerId]?.connected);
+}
+
+function publicPresence(room) {
+  const presence = {};
+  for (const player of room.players) {
+    const item = room.presence?.[player.id] || {};
+    presence[player.id] = {
+      connected: Boolean(item.connected),
+      lastSeen: item.lastSeen || player.joinedAt
+    };
+  }
+  return presence;
+}
+
 function scheduleRoundEnd(room) {
   clearRoundTimer(room.code);
   const delay = Math.max(0, room.currentQuestionEndsAt - Date.now() + 25);
@@ -707,7 +883,14 @@ function readRoom(code) {
   return room;
 }
 
-function openRoomStream(req, res, room) {
+function openRoomStream(req, res, room, url) {
+  const playerId = String(url.searchParams.get("player") || "");
+  const hasPlayerConnection = addPlayerConnection(room, playerId);
+  if (hasPlayerConnection) {
+    touch(room);
+    broadcast(room);
+  }
+
   res.writeHead(200, {
     ...securityHeaders(),
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -728,6 +911,11 @@ function openRoomStream(req, res, room) {
     clearInterval(heartbeat);
     roomStreams.delete(res);
     if (!roomStreams.size) streams.delete(room.code);
+    if (hasPlayerConnection) {
+      removePlayerConnection(room, playerId);
+      touch(room);
+      broadcast(room);
+    }
   });
 }
 

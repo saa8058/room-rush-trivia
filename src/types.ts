@@ -26,7 +26,8 @@ export type Player = {
 
 export type GameSettings = {
   roundCount: 5 | 10 | 15 | 20 | 30;
-  timerSeconds: 10 | 15 | 20 | 30;
+  timerSeconds: 10 | 15 | 20;
+  pacingMode: "Fast" | "Normal" | "Relaxed";
   categoryMode: TriviaCategory;
 };
 
@@ -113,6 +114,16 @@ export type Room = {
   previousLeaderboard: LeaderboardEntry[];
   lastLeaderboard: LeaderboardEntry[];
   roundResults: RoundResult[];
+  lobbyReady: Record<string, boolean>;
+  nextReady: Record<string, number>;
+  presence: Record<string, { connected: boolean; lastSeen: number }>;
+  questionReports: Array<{
+    playerId: string;
+    questionId: string;
+    reason: "too_easy" | "wrong_answer" | "repeated" | "unclear";
+    roundIndex: number;
+    createdAt: number;
+  }>;
   createdAt: number;
   updatedAt: number;
 };

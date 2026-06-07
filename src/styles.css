@@ -105,6 +105,29 @@ button:disabled {
   background: rgba(8, 11, 24, 0.44);
 }
 
+.connection-pill {
+  justify-self: end;
+  width: fit-content;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.connection-pill.live {
+  color: var(--lime);
+  border-color: rgba(182, 255, 77, 0.3);
+}
+
+.connection-pill.reconnecting {
+  color: var(--yellow);
+  border-color: rgba(255, 209, 102, 0.34);
+}
+
 .install-card {
   display: grid;
   gap: 14px;
@@ -383,6 +406,10 @@ select:focus {
   gap: 14px;
 }
 
+.invite-card h3 {
+  margin-bottom: 6px;
+}
+
 .room-code-block {
   display: grid;
   place-items: center;
@@ -482,6 +509,35 @@ select:focus {
   color: var(--lime);
   font-size: 0.78rem;
   text-transform: uppercase;
+}
+
+.pill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.mini-button {
+  min-height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.lobby-actions,
+.report-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.report-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .countdown-panel {
@@ -683,6 +739,17 @@ select:focus {
   color: var(--lime);
 }
 
+.detailed-award {
+  display: grid;
+  align-items: start;
+}
+
+.detailed-award small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .summary-hero {
   padding: 20px;
 }
@@ -863,7 +930,8 @@ select:focus {
   }
 
   .answer-grid,
-  .awards-grid {
+  .awards-grid,
+  .report-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
