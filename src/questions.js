@@ -1,4 +1,5 @@
 import { EXPANDED_TRIVIA_QUESTIONS } from "./questionExpansion.js";
+import { GENIUS_QUESTIONS } from "./geniusQuestions.js";
 
 const q = (id, category, difficulty, question, choices, correctIndex, explanation) => ({
   id,
@@ -880,4 +881,6 @@ export const TRIVIA_QUESTIONS = [
   ...EXPANDED_TRIVIA_QUESTIONS
 ].map(normalizeVisualQuestion);
 
-export const QUESTION_BY_ID = Object.fromEntries(TRIVIA_QUESTIONS.map((question) => [question.id, question]));
+export const QUESTION_BY_ID = Object.fromEntries(
+  [...TRIVIA_QUESTIONS, ...GENIUS_QUESTIONS].map((question) => [question.id, question])
+);

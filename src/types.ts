@@ -16,6 +16,9 @@ export type TriviaCategory =
   | "Cars"
   | "Football Special";
 
+export type GameMode = "Classic" | "Genius";
+export type GeniusCategory = "World History" | "Hollywood" | "Animal Kingdom" | "Brands" | "Geography" | "Sports";
+
 export type Difficulty = "Easy" | "Medium" | "Hard";
 
 export type Player = {
@@ -25,6 +28,7 @@ export type Player = {
 };
 
 export type GameSettings = {
+  gameMode: GameMode;
   roundCount: 5 | 10 | 15 | 20 | 30;
   timerSeconds: 10 | 15 | 20;
   pacingMode: "Fast" | "Normal" | "Relaxed";
@@ -33,7 +37,7 @@ export type GameSettings = {
 
 export type TriviaQuestion = {
   id: string;
-  category: Exclude<TriviaCategory, "Mixed Party">;
+  category: Exclude<TriviaCategory, "Mixed Party"> | GeniusCategory;
   difficulty: Difficulty;
   question: string;
   choices: [string, string, string, string];

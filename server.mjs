@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { CATEGORY_MODES, QUESTION_BY_ID, TRIVIA_QUESTIONS } from "./src/questions.js";
+import { GENIUS_CATEGORIES, GENIUS_QUESTIONS } from "./src/geniusQuestions.js";
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
@@ -33,6 +34,7 @@ const types = {
 };
 
 const defaultSettings = {
+  gameMode: "Classic",
   roundCount: 10,
   timerSeconds: 15,
   pacingMode: "Normal",
@@ -305,12 +307,20 @@ function updateSettings(room, playerId, settings = {}) {
   const pacingMode = String(settings.pacingMode || settings.pace || "Normal");
   const timerSeconds = pacingSeconds[pacingMode] || Number(settings.timerSeconds);
   const categoryMode = String(settings.categoryMode || "");
+  const gameMode = String(settings.gameMode || "Classic");
 
   if (![5, 10, 15, 20, 30].includes(roundCount)) throw httpError(400, "Choose 5, 10, 15, 20, or 30 rounds.");
   if (!Object.keys(pacingSeconds).includes(pacingMode)) throw httpError(400, "Choose Fast, Normal, or Relaxed pacing.");
   if (!CATEGORY_MODES.includes(categoryMode)) throw httpError(400, "Choose a valid category mode.");
+  if (!["Classic", "Genius"].includes(gameMode)) throw httpError(400, "Choose a valid game mode.");
 
-  room.settings = { roundCount, timerSeconds, pacingMode, categoryMode };
+  room.settings = {
+    gameMode,
+    roundCount: gameMode === "Genius" ? 30 : roundCount,
+    timerSeconds,
+    pacingMode,
+    categoryMode
+  };
   return room;
 }
 
@@ -498,13 +508,16 @@ function finalizeRound(room) {
     if (isCorrect) {
       room.streaks[player.id] = (room.streaks[player.id] || 0) + 1;
       const streak = room.streaks[player.id];
-      if (streak >= 7) streakBonus = 75;
-      else if (streak >= 5) streakBonus = 50;
-      else if (streak >= 3) streakBonus = 20;
+      const isGenius = room.settings.gameMode === "Genius";
+      if (streak >= 7) streakBonus = isGenius ? 125 : 75;
+      else if (streak >= 5) streakBonus = isGenius ? 75 : 50;
+      else if (streak >= 3) streakBonus = isGenius ? 30 : 20;
 
       const timeRemaining = Math.max(0, answer.timeRemainingMs / 1000);
-      speedBonus = Math.round(50 * (timeRemaining / room.settings.timerSeconds));
-      points = 100 + speedBonus + streakBonus;
+      const basePoints = isGenius ? 200 : 100;
+      const maximumSpeedBonus = isGenius ? 100 : 50;
+      speedBonus = Math.round(maximumSpeedBonus * (timeRemaining / room.settings.timerSeconds));
+      points = basePoints + speedBonus + streakBonus;
       room.stats[player.id].correctAnswers += 1;
       room.stats[player.id].totalCorrectTimeMs += answer.answeredInMs;
       room.stats[player.id].longestStreak = Math.max(room.stats[player.id].longestStreak, streak);
@@ -523,7 +536,7 @@ function finalizeRound(room) {
       isCorrect,
       answeredInMs: answer?.answeredInMs ?? null,
       timeRemainingMs: answer?.timeRemainingMs ?? 0,
-      basePoints: isCorrect ? 100 : 0,
+      basePoints: isCorrect ? (room.settings.gameMode === "Genius" ? 200 : 100) : 0,
       speedBonus,
       streakBonus,
       points
@@ -653,6 +666,8 @@ function publicRoom(room) {
 }
 
 function selectQuestions(settings) {
+  if (settings.gameMode === "Genius") return selectGeniusQuestions();
+
   const pool = settings.categoryMode === "Mixed Party"
     ? TRIVIA_QUESTIONS
     : TRIVIA_QUESTIONS.filter((question) => question.category === settings.categoryMode);
@@ -674,6 +689,13 @@ function selectQuestions(settings) {
   }
 
   return orderSessionQuestions(selected.slice(0, roundCount)).map((question) => question.id);
+}
+
+function selectGeniusQuestions() {
+  return GENIUS_CATEGORIES.flatMap((category) => {
+    const categoryPool = GENIUS_QUESTIONS.filter((question) => question.category === category);
+    return shuffle(categoryPool).slice(0, 5).map((question) => question.id);
+  });
 }
 
 function uniqueQuestionsForSession(pool) {

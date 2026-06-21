@@ -1,4 +1,5 @@
 import { CATEGORY_MODES, QUESTION_BY_ID, TRIVIA_QUESTIONS } from "./questions.js";
+import { GENIUS_CATEGORIES } from "./geniusQuestions.js";
 import { getPhrase } from "./microcopy.js";
 import {
   enableAudio,
@@ -42,6 +43,7 @@ let state = {
   playerId: params.get("player") || "",
   joinCode: params.get("room") || "",
   createName: "",
+  createMode: "Classic",
   joinName: "",
   error: "",
   loading: false,
@@ -112,12 +114,13 @@ function renderCurrentView() {
 }
 
 function screenLayout(content) {
+  const genius = isGeniusMode();
   return `
-    <section class="screen">
+    <section class="screen ${genius ? "genius-mode" : ""}">
 	      <div class="rush-strip" aria-hidden="true">
 	        <span>Atwix</span>
-	        <span>Fast fingers</span>
-	        <span>Big points</span>
+	        <span>${genius ? "Genius Gauntlet" : "Fast fingers"}</span>
+	        <span>${genius ? "Six domains · one crown" : "Big points"}</span>
 	      </div>
 	      ${renderAudioControls()}
 	      ${renderConnectionStatus()}
@@ -157,10 +160,19 @@ function renderLanding() {
       <p class="eyebrow">Party trivia for fast friends.</p>
       <h1>Atwix Trivia</h1>
       <p class="subtitle">${escapeHtml(getPhrase("landingSubtitle", "home"))}</p>
-      <div class="hero-actions">
-        <button class="primary-button" data-view="create">Create Game</button>
-        <button class="secondary-button" data-view="join">Join Game</button>
+      <div class="mode-launch-grid">
+        <button class="mode-launch genius-launch" data-view="create" data-create-mode="Genius">
+          <span class="mode-launch-badge">New · Expert challenge</span>
+          <strong>Genius Mode</strong>
+          <small>6 sections · 30 difficult questions · double points</small>
+        </button>
+        <button class="mode-launch classic-launch" data-view="create" data-create-mode="Classic">
+          <span class="mode-launch-badge">Party favorite</span>
+          <strong>Classic Game</strong>
+          <small>Choose your rounds, pacing, and category</small>
+        </button>
       </div>
+      <button class="secondary-button landing-join" data-view="join">Join a Room</button>
       <p class="helper">${escapeHtml(getPhrase("landingHelper", "home"))}</p>
     </section>
     ${renderInstallCard()}
@@ -168,20 +180,32 @@ function renderLanding() {
 }
 
 function renderCreate() {
+  const genius = state.createMode === "Genius";
   return `
     <div class="topbar">
       <button class="ghost-button icon-button" data-view="landing" aria-label="Back">‹</button>
       <div>
-        <p class="eyebrow">Create game</p>
-        <h2>Start the room.</h2>
+        <p class="eyebrow">${genius ? "Genius mode" : "Classic game"}</p>
+        <h2>${genius ? "Build the gauntlet." : "Start the room."}</h2>
       </div>
     </div>
     <form class="panel form-panel" id="create-form">
+      <fieldset class="create-mode-picker">
+        <legend>Choose game mode</legend>
+        <label class="create-mode-option ${genius ? "selected genius-option" : "genius-option"}">
+          <input type="radio" name="gameMode" value="Genius" ${genius ? "checked" : ""} />
+          <span><strong>Genius</strong><small>Six expert sections, 30 questions, double points</small></span>
+        </label>
+        <label class="create-mode-option ${!genius ? "selected" : ""}">
+          <input type="radio" name="gameMode" value="Classic" ${!genius ? "checked" : ""} />
+          <span><strong>Classic</strong><small>Flexible party trivia with custom categories</small></span>
+        </label>
+      </fieldset>
       <label>
         <span>Your display name</span>
         <input name="displayName" autocomplete="nickname" maxlength="28" placeholder="Mira" value="${escapeAttr(state.createName)}" required />
       </label>
-      <button class="primary-button wide" type="submit" ${state.loading ? "disabled" : ""}>Create Room</button>
+      <button class="primary-button wide ${genius ? "genius-create-button" : ""}" type="submit" ${state.loading ? "disabled" : ""}>${genius ? "Create Genius Room" : "Create Classic Room"}</button>
     </form>
   `;
 }
@@ -213,6 +237,7 @@ function renderJoin() {
 
 function renderLobby() {
   const isHost = isCurrentHost();
+  const genius = isGeniusMode();
   const ready = state.room.lobbyReady || {};
   const currentReady = Boolean(ready[state.currentPlayer.id]);
   const readyCount = state.room.players.filter((player) => ready[player.id]).length;
@@ -274,17 +299,35 @@ function renderLobby() {
       </div>
       ${isHost ? renderSettingsForm() : `<p class="helper">${escapeHtml(getPhrase("waitingForHost", state.room.code))}</p>`}
     </section>
+    ${genius ? `
+      <section class="genius-brief">
+        <p class="eyebrow">Genius mode armed</p>
+        <h3>Six sections. Thirty hard questions. No filler.</h3>
+        <div class="genius-category-list">
+          ${GENIUS_CATEGORIES.map((category, index) => `<span><b>${index + 1}</b>${escapeHtml(category)}</span>`).join("")}
+        </div>
+        <p>Each section draws five questions from a private bank of 110. Correct answers are worth double before speed and streak bonuses.</p>
+      </section>
+    ` : ""}
   `;
 }
 
 function renderSettingsForm() {
+  const genius = isGeniusMode();
   return `
     <form id="settings-form" class="settings-grid">
+      <label class="wide-field">
+        <span>Game mode</span>
+        <select name="gameMode">
+          <option value="Classic" ${!genius ? "selected" : ""}>Classic Party</option>
+          <option value="Genius" ${genius ? "selected" : ""}>Genius — 6-section gauntlet</option>
+        </select>
+      </label>
       <label>
         <span>Rounds</span>
-        <select name="roundCount">
-          ${[5, 10, 15, 20, 30].map((value) => `<option value="${value}" ${state.room.settings.roundCount === value ? "selected" : ""}>${value}</option>`).join("")}
-        </select>
+        ${genius
+          ? `<input type="hidden" name="roundCount" value="30" /><div class="locked-setting">30 · fixed</div>`
+          : `<select name="roundCount">${[5, 10, 15, 20, 30].map((value) => `<option value="${value}" ${state.room.settings.roundCount === value ? "selected" : ""}>${value}</option>`).join("")}</select>`}
       </label>
       <label>
         <span>Pacing</span>
@@ -298,11 +341,11 @@ function renderSettingsForm() {
       </label>
       <label class="wide-field">
         <span>Category mode</span>
-        <select name="categoryMode">
-          ${CATEGORY_MODES.map((mode) => `<option value="${escapeAttr(mode)}" ${state.room.settings.categoryMode === mode ? "selected" : ""}>${escapeHtml(mode)}</option>`).join("")}
-        </select>
+        ${genius
+          ? `<input type="hidden" name="categoryMode" value="${escapeAttr(state.room.settings.categoryMode)}" /><div class="locked-setting">All six Genius categories</div>`
+          : `<select name="categoryMode">${CATEGORY_MODES.map((mode) => `<option value="${escapeAttr(mode)}" ${state.room.settings.categoryMode === mode ? "selected" : ""}>${escapeHtml(mode)}</option>`).join("")}</select>`}
       </label>
-      <button class="primary-button wide-field" id="start-game" type="button" ${!canStartFromLobby() ? "disabled" : ""}>Start Game</button>
+      <button class="primary-button wide-field" id="start-game" type="button" ${!canStartFromLobby() ? "disabled" : ""}>${genius ? "Enter the Genius Gauntlet" : "Start Game"}</button>
     </form>
   `;
 }
@@ -328,11 +371,16 @@ function renderInstallCard(context = "landing") {
 function renderCountdown() {
   const question = getCurrentQuestion();
   const count = Math.max(1, Math.ceil((state.room.currentQuestionStartedAt - Date.now()) / 1000));
+  const section = geniusSectionInfo();
+  const geniusCopy = section
+    ? `<p class="section-counter">Section ${section.number} of ${GENIUS_CATEGORIES.length} · Question ${section.questionNumber} of 5</p>
+       <h2>${section.questionNumber === 1 ? escapeHtml(section.category) : "Next Genius question"}</h2>`
+    : `<h2>${escapeHtml(getPhrase("countdown", roundPhraseKey()))}</h2>`;
   return `
     <section class="countdown-panel">
-      <p class="eyebrow">${escapeHtml(question.category)}</p>
+      <p class="eyebrow">${section && section.questionNumber === 1 ? "New section unlocked" : escapeHtml(question.category)}</p>
       <div class="countdown-number">${count}</div>
-      <h2>${escapeHtml(getPhrase("countdown", roundPhraseKey()))}</h2>
+      ${geniusCopy}
     </section>
   `;
 }
@@ -347,9 +395,10 @@ function renderQuestion() {
   const percent = Math.max(0, Math.min(100, (remaining / total) * 100));
   const secondsLeft = Math.max(0, Math.ceil(remaining / 1000));
   const answeredCount = Object.keys(state.room.answers?.[getCurrentQuestionId(state.room)] || {}).length;
+  const section = geniusSectionInfo();
   return `
     <div class="progress-row">
-      <span>Round ${state.room.currentRoundIndex + 1} of ${totalRounds()}</span>
+      <span>${section ? `Section ${section.number}/${GENIUS_CATEGORIES.length} · Question ${section.questionNumber}/5` : `Round ${state.room.currentRoundIndex + 1} of ${totalRounds()}`}</span>
       <strong class="timer-count">${secondsLeft}s left</strong>
     </div>
     <div class="progress-row mini-row">
@@ -358,7 +407,7 @@ function renderQuestion() {
     </div>
     <div class="timer-track"><span style="width:${percent}%"></span></div>
     <article class="question-card">
-      <p class="card-category">${escapeHtml(question.difficulty)} · ${escapeHtml(question.category)}</p>
+      <p class="card-category">${isGeniusMode() ? "Genius · double points" : escapeHtml(question.difficulty)} · ${escapeHtml(question.category)}</p>
       ${renderQuestionMedia(question)}
       <h2>${escapeHtml(displayQuestionText(question))}</h2>
     </article>
@@ -401,9 +450,10 @@ function renderReveal() {
   const revealStory = getRevealStory(result, playerResult);
   const fastest = playerName(result?.fastestCorrectPlayerId);
   const totalAnswers = Math.max(1, result?.answerCounts?.reduce((sum, count) => sum + count, 0) || 0);
+  const section = geniusSectionInfo();
   return `
     <div class="progress-row">
-      <span>${escapeHtml(revealStory.kicker)}</span>
+      <span>${section ? `Genius ${section.number}.${section.questionNumber}` : escapeHtml(revealStory.kicker)}</span>
       <span>${escapeHtml(question.category)}</span>
     </div>
     <section class="reveal-answer ${playerResult?.isCorrect ? "correct" : "wrong"}">
@@ -469,18 +519,27 @@ function renderLeaderboard() {
   const ready = state.room.nextReady || {};
   const readyCount = state.room.players.filter((player) => ready[player.id]).length;
   const currentReady = Boolean(ready[state.currentPlayer.id]);
+  const section = geniusSectionInfo();
+  const sectionComplete = Boolean(section && section.questionNumber === 5);
+  const nextCategory = sectionComplete ? GENIUS_CATEGORIES[section.number] : "";
+  const displayedStory = sectionComplete
+    ? {
+        headline: `${section.category} conquered.`,
+        body: nextCategory ? `Section ${section.number} is sealed. Next arena: ${nextCategory}.` : "All six domains are complete. One final crown remains."
+      }
+    : story;
   return `
     <section class="summary-hero">
-      <p class="eyebrow">Leaderboard</p>
-      <h1>${escapeHtml(story.headline)}</h1>
-      <p>${escapeHtml(story.body)}</p>
+      <p class="eyebrow">${sectionComplete ? `Section ${section.number} complete` : "Leaderboard"}</p>
+      <h1>${escapeHtml(displayedStory.headline)}</h1>
+      <p>${escapeHtml(displayedStory.body)}</p>
     </section>
     <section class="leaderboard-list">
       ${leaderboard.map((entry) => renderLeaderboardEntry(entry)).join("")}
     </section>
     <section class="panel">
       <div class="section-title">
-        <h3>${isLastRound ? "Final reveal check" : "Next question check"}</h3>
+        <h3>${isLastRound ? "Final reveal check" : sectionComplete ? "Next section check" : "Next question check"}</h3>
         <span>${readyCount}/${state.room.players.length} ready</span>
       </div>
       <p class="helper">${currentReady ? "You are ready. Waiting for the rest of the room." : "Everyone taps ready, then the next screen starts together."}</p>
@@ -493,7 +552,7 @@ function renderLeaderboard() {
         `).join("")}
       </div>
     </section>
-    <button class="primary-button wide" id="next-question" ${currentReady ? "disabled" : ""}>${currentReady ? "Ready locked" : isLastRound ? "Ready for Final Results" : "Ready for Next Question"}</button>
+    <button class="primary-button wide" id="next-question" ${currentReady ? "disabled" : ""}>${currentReady ? "Ready locked" : isLastRound ? "Reveal the Genius" : sectionComplete ? `Enter ${escapeHtml(nextCategory)}` : "Ready for Next Question"}</button>
   `;
 }
 
@@ -502,13 +561,13 @@ function renderFinal() {
   const winner = leaderboard[0];
   const awards = state.room.finalAwards || {};
   const winnerLine = winner
-    ? `${winner.displayName} takes the crown with ${winner.totalPoints} points.`
+    ? `${winner.displayName} takes the ${isGeniusMode() ? "Genius Crown" : "crown"} with ${winner.totalPoints} points.`
     : getPhrase("final", state.room.code);
   return `
     <section class="summary-hero final-hero">
       ${renderConfetti()}
-      <p class="eyebrow">Final results</p>
-      <h1>${winner ? `${escapeHtml(winner.displayName)} wins!` : "Game over!"}</h1>
+      <p class="eyebrow">${isGeniusMode() ? "The gauntlet is complete" : "Final results"}</p>
+      <h1>${winner ? `${escapeHtml(winner.displayName)} ${isGeniusMode() ? "is the Genius!" : "wins!"}` : "Game over!"}</h1>
       <p>${escapeHtml(winnerLine)}</p>
     </section>
     <section class="leaderboard-list">
@@ -704,6 +763,7 @@ function renderAwardCards(awards) {
 function bindActions() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.createMode) state.createMode = button.dataset.createMode;
       state.unsubscribe?.();
       clearInterval(state.timer);
       state.view = button.dataset.view;
@@ -728,6 +788,12 @@ function bindActions() {
   document.querySelector("#create-form")?.addEventListener("submit", handleCreate);
   document.querySelector("#create-form input[name='displayName']")?.addEventListener("input", (event) => {
     state.createName = event.target.value;
+  });
+  document.querySelectorAll("#create-form input[name='gameMode']").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      state.createMode = event.target.value;
+      render();
+    });
   });
   document.querySelector("#join-form")?.addEventListener("submit", handleJoin);
   document.querySelector("#join-form input[name='displayName']")?.addEventListener("input", (event) => {
@@ -799,11 +865,19 @@ function bindActions() {
 async function handleCreate(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const selectedMode = String(form.get("gameMode") || state.createMode || "Classic");
   await safely(async () => {
     state.loading = true;
     render();
     const result = await createRoom(form.get("displayName"));
-    state.room = result.room;
+    state.room = selectedMode === "Genius"
+      ? await updateSettings(result.room.code, result.player.id, {
+          gameMode: "Genius",
+          roundCount: 30,
+          pacingMode: result.room.settings.pacingMode || "Normal",
+          categoryMode: result.room.settings.categoryMode
+        })
+      : result.room;
     state.currentPlayer = result.player;
     state.playerId = result.player.id;
     state.view = "room";
@@ -839,6 +913,7 @@ async function handleSettingsChange(event) {
   const form = new FormData(event.currentTarget);
   await safely(async () => {
 	    state.room = await updateSettings(state.room.code, state.currentPlayer.id, {
+	      gameMode: form.get("gameMode"),
 	      roundCount: Number(form.get("roundCount")),
 	      pacingMode: form.get("pacingMode"),
 	      categoryMode: form.get("categoryMode")
@@ -1028,6 +1103,22 @@ function roundPhraseKey() {
 
 function totalRounds() {
   return state.room?.selectedQuestionIds?.length || state.room?.settings?.roundCount || 0;
+}
+
+function isGeniusMode(room = state.room) {
+  return room?.settings?.gameMode === "Genius";
+}
+
+function geniusSectionInfo(room = state.room) {
+  if (!isGeniusMode(room)) return null;
+  const roundIndex = room?.currentRoundIndex || 0;
+  const sectionIndex = Math.floor(roundIndex / 5);
+  return {
+    index: sectionIndex,
+    number: sectionIndex + 1,
+    questionNumber: (roundIndex % 5) + 1,
+    category: GENIUS_CATEGORIES[sectionIndex] || getCurrentQuestion()?.category || "Genius"
+  };
 }
 
 function playerAnswerLabel(question, result) {

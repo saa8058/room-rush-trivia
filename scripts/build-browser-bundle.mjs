@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 
 const sources = [
   "src/questionExpansion.js",
+  "src/geniusQuestions.js",
   "src/questions.js",
   "src/microcopy.js",
   "src/audio.js",
