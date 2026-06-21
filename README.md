@@ -83,3 +83,16 @@ The local deck contains more than 1,000 trivia questions across the party catego
 - landmark, stadium, and animal photos through `/api/wiki-image`, which redirects to Wikipedia/Wikimedia images
 
 If a real image cannot load, the app shows a clean unavailable state instead of a fake generated picture. You can still add your own permitted local image assets under `public/images/questions/`.
+
+### Genius mode
+
+Genius is a fixed 30-question gauntlet with six sections in this order:
+
+1. World History
+2. Hollywood
+3. Animal Kingdom
+4. Brands
+5. Geography
+6. Sports
+
+Every section randomly draws 5 hard questions from its own bank of exactly 110. Genius answers award double base points and larger speed and streak bonuses.
