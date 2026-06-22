@@ -6,7 +6,7 @@ export const PHRASES = {
     "Your phone is the buzzer. Your friends are the problem."
   ],
   landingHelper: [
-    "No login. Just room code and chaos.",
+    "Sign in. Join the room. Keep the rivalry forever.",
     "Bring friends. Protect your reputation.",
     "Two minutes to start. Bragging rights forever.",
     "Low setup. High drama."
