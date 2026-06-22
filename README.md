@@ -28,8 +28,11 @@ The app needs a public web address. Local Wi-Fi links like `http://10.x.x.x:3017
    - Build command: `node scripts/build-browser-bundle.mjs && node scripts/validate-deck.mjs`
    - Start command: `node server.mjs`
    - Health check path: `/healthz`
-5. Add this environment variable:
+5. Add these environment variables:
    - `HOST=0.0.0.0`
+   - `SUPABASE_URL=https://YOUR_PROJECT.supabase.co`
+   - `SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY`
+   - `SUPABASE_SECRET_KEY=YOUR_SECRET_KEY`
 6. Deploy, then share the Render URL with players.
 
 Optional environment variable:
@@ -49,11 +52,17 @@ Atwix Trivia is a Progressive Web App. After you deploy it:
 
 Everyone still plays through the same public server. The installed app is just a home-screen shortcut with app-style display.
 
+## Accounts and rivalry history
+
+Every player must create an email-linked account or sign in before playing. Completed games update permanent career wins, losses, draws, mode wins, and head-to-head rivalry records. Account and history data is stored in Supabase; active rooms remain in the game server's memory.
+
+Run `supabase/schema.sql` once in the Supabase SQL Editor before deploying the account-enabled version. Keep the secret key only in the server host's protected environment settings—never commit it or expose it in browser code.
+
 ## Important limitations
 
 Rooms are stored in memory. If the server restarts, active rooms disappear. For casual game nights this is fine, but a production version should move room state to Redis, Firebase, Supabase, or another shared realtime store.
 
-The app does not use login, payments, gambling, betting, or real-money mechanics.
+The app does not use payments, gambling, betting, or real-money mechanics.
 
 ## Sound files
 

@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { CATEGORY_MODES, QUESTION_BY_ID, TRIVIA_QUESTIONS } from "./src/questions.js";
 import { GENIUS_CATEGORIES, GENIUS_QUESTIONS } from "./src/geniusQuestions.js";
+import {
+  getRoomRivalries,
+  handleAccountApi,
+  recordCompletedRoom,
+  requireAccount
+} from "./accountServer.mjs";
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
@@ -140,9 +146,15 @@ server.listen(port, host, () => {
 async function handleApi(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean);
 
+  if (url.pathname.startsWith("/api/auth/") || url.pathname === "/api/account") {
+    const handled = await handleAccountApi(req, res, url, { readJson, sendJson, getPublicOrigin, httpError });
+    if (handled) return;
+  }
+
+  const account = await requireAccount(req, res);
+
   if (req.method === "POST" && url.pathname === "/api/rooms") {
-    const body = await readJson(req);
-    const result = createRoom(body.displayName, req);
+    const result = await createRoom(account, req);
     sendJson(res, 201, { room: publicRoom(result.room), player: result.player });
     return;
   }
@@ -156,12 +168,13 @@ async function handleApi(req, res, url) {
   tickRoom(room);
 
   if (req.method === "GET" && parts.length === 3) {
+    await retryFinishedRoomHistory(room);
     sendJson(res, 200, { room: publicRoom(room) });
     return;
   }
 
   if (req.method === "GET" && parts[3] === "events") {
-    openRoomStream(req, res, room, url);
+    openRoomStream(req, res, room, account.id);
     return;
   }
 
@@ -170,19 +183,20 @@ async function handleApi(req, res, url) {
   const body = await readJson(req);
   let payload;
 
-  if (body.playerId) markPlayerSeen(room, body.playerId);
+  const playerId = account.id;
+  if (room.players.some((player) => player.id === playerId)) markPlayerSeen(room, playerId);
 
-  if (parts[3] === "join") payload = joinRoom(room, body.displayName, body.playerId);
-  else if (parts[3] === "settings") payload = { room: updateSettings(room, body.playerId, body.settings) };
-  else if (parts[3] === "lobby-ready") payload = { room: setLobbyReady(room, body.playerId, body.ready) };
-  else if (parts[3] === "transfer-host") payload = { room: transferHost(room, body.playerId, body.targetPlayerId) };
-  else if (parts[3] === "start") payload = { room: startGame(room, body.playerId) };
-  else if (parts[3] === "answer") payload = { room: submitAnswer(room, body.playerId, body.choiceIndex) };
+  if (parts[3] === "join") payload = await joinRoom(room, account);
+  else if (parts[3] === "settings") payload = { room: updateSettings(room, playerId, body.settings) };
+  else if (parts[3] === "lobby-ready") payload = { room: setLobbyReady(room, playerId, body.ready) };
+  else if (parts[3] === "transfer-host") payload = { room: transferHost(room, playerId, body.targetPlayerId) };
+  else if (parts[3] === "start") payload = { room: startGame(room, playerId) };
+  else if (parts[3] === "answer") payload = { room: submitAnswer(room, playerId, body.choiceIndex) };
   else if (parts[3] === "tick") payload = { room };
-  else if (parts[3] === "show-leaderboard") payload = { room: showLeaderboard(room, body.playerId) };
-  else if (parts[3] === "next") payload = { room: nextQuestion(room, body.playerId) };
-  else if (parts[3] === "report-question") payload = { room: reportQuestion(room, body.playerId, body.questionId, body.reason) };
-  else if (parts[3] === "play-again") payload = { room: playAgain(room, body.playerId) };
+  else if (parts[3] === "show-leaderboard") payload = { room: showLeaderboard(room, playerId) };
+  else if (parts[3] === "next") payload = { room: await nextQuestion(room, playerId) };
+  else if (parts[3] === "report-question") payload = { room: reportQuestion(room, playerId, body.questionId, body.reason) };
+  else if (parts[3] === "play-again") payload = { room: playAgain(room, playerId) };
   else throw httpError(404, "Unknown room action.");
 
   touch(room);
@@ -226,15 +240,13 @@ async function handleWikiImage(req, res, url) {
   res.end();
 }
 
-function createRoom(displayName, req) {
+async function createRoom(account, req) {
   pruneRooms();
-  const cleanName = normalizeName(displayName);
-  if (!cleanName) throw httpError(400, "Add your display name first.");
 
   let code = createCode();
   while (rooms.has(code)) code = createCode();
 
-  const player = createPlayer(cleanName);
+  const player = createPlayer(account);
   const now = Date.now();
   const inviteUrl = new URL("/", getPublicOrigin(req));
   inviteUrl.searchParams.set("room", code);
@@ -261,6 +273,8 @@ function createRoom(displayName, req) {
 	    nextReady: {},
 	    lobbyReady: {},
 	    questionReports: [],
+	    rivalries: [],
+	    historySaved: false,
 	    presence: {
 	      [player.id]: { connected: false, connections: 0, lastSeen: now }
 	    },
@@ -268,17 +282,15 @@ function createRoom(displayName, req) {
 	    updatedAt: now
 	  };
 
+  room.rivalries = await getRoomRivalries([player.id]);
   rooms.set(code, room);
   return { room, player };
 }
 
-function joinRoom(room, displayName, playerId) {
-  const cleanName = normalizeName(displayName);
-  if (!cleanName) throw httpError(400, "Add your display name first.");
-
-  const existing = room.players.find((player) => player.id === playerId);
+async function joinRoom(room, account) {
+  const existing = room.players.find((player) => player.id === account.id);
   if (existing) {
-    existing.displayName = cleanName;
+    existing.displayName = account.displayName;
     markPlayerSeen(room, existing.id);
     return { room, player: existing };
   }
@@ -287,7 +299,7 @@ function joinRoom(room, displayName, playerId) {
 
   if (room.players.length >= 12) throw httpError(409, "That room is full. Max 12 players.");
 
-  const player = createPlayer(cleanName);
+  const player = createPlayer(account);
   room.players.push(player);
   room.scores[player.id] = 0;
   room.streaks[player.id] = 0;
@@ -296,6 +308,7 @@ function joinRoom(room, displayName, playerId) {
   room.lobbyReady[player.id] = false;
   room.presence ||= {};
   room.presence[player.id] = { connected: false, connections: 0, lastSeen: Date.now() };
+  room.rivalries = await getRoomRivalries(room.players.map((item) => item.id));
   return { room, player };
 }
 
@@ -408,7 +421,7 @@ function showLeaderboard(room, playerId) {
   return room;
 }
 
-function nextQuestion(room, playerId) {
+async function nextQuestion(room, playerId) {
   if (!room.players.some((player) => player.id === playerId)) throw httpError(403, "Rejoin the room to continue.");
   if (room.status !== "leaderboard") throw httpError(409, "Show the leaderboard before moving on.");
 
@@ -420,12 +433,24 @@ function nextQuestion(room, playerId) {
     room.status = "finished";
     room.finalAwards = buildAwards(room);
     room.nextReady = {};
+    await retryFinishedRoomHistory(room);
     return room;
   }
 
   room.currentRoundIndex += 1;
   beginQuestion(room);
   return room;
+}
+
+async function retryFinishedRoomHistory(room) {
+  if (room.status !== "finished" || room.historySaved) return;
+  try {
+    await recordCompletedRoom(room);
+    room.rivalries = await getRoomRivalries(room.players.map((player) => player.id));
+  } catch (error) {
+    console.error("Could not save match history:", error.message);
+    room.historySaved = false;
+  }
 }
 
 function reportQuestion(room, playerId, questionId, reason) {
@@ -461,6 +486,7 @@ function playAgain(room, playerId) {
   room.previousLeaderboard = [];
   room.lastLeaderboard = [];
   room.finalAwards = null;
+  room.historySaved = false;
   room.nextReady = {};
   room.lobbyReady = {};
   resetGameStats(room);
@@ -905,8 +931,7 @@ function readRoom(code) {
   return room;
 }
 
-function openRoomStream(req, res, room, url) {
-  const playerId = String(url.searchParams.get("player") || "");
+function openRoomStream(req, res, room, playerId) {
   const hasPlayerConnection = addPlayerConnection(room, playerId);
   if (hasPlayerConnection) {
     touch(room);
@@ -1224,10 +1249,10 @@ function httpError(status, message) {
   return error;
 }
 
-function createPlayer(displayName) {
+function createPlayer(account) {
   return {
-    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    displayName,
+    id: account.id,
+    displayName: account.displayName,
     joinedAt: Date.now()
   };
 }

@@ -11,20 +11,18 @@ export const partyLines = [
   "The group chat will remember this."
 ];
 
-export async function createRoom(displayName) {
+export async function createRoom() {
   const result = await api("/api/rooms", {
-    method: "POST",
-    body: { displayName }
+    method: "POST"
   });
   setTabPlayerId(result.room.code, result.player.id);
   return result;
 }
 
-export async function joinRoom(codeInput, displayName, playerId = null) {
+export async function joinRoom(codeInput) {
   const code = normalizeCode(codeInput);
   const result = await api(`/api/rooms/${code}/join`, {
-    method: "POST",
-    body: { displayName, playerId }
+    method: "POST"
   });
   setTabPlayerId(result.room.code, result.player.id);
   return result;
