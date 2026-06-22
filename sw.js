@@ -1,4 +1,4 @@
-const CACHE_NAME = "atwix-trivia-v2-genius";
+const CACHE_NAME = "atwix-trivia-v3-accounts";
 const APP_SHELL = [
   "/",
   "/index.html",

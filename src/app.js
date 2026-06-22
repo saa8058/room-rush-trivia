@@ -2,6 +2,16 @@ import { CATEGORY_MODES, QUESTION_BY_ID, TRIVIA_QUESTIONS } from "./questions.js
 import { GENIUS_CATEGORIES } from "./geniusQuestions.js";
 import { getPhrase } from "./microcopy.js";
 import {
+  exchangeAuthTokens,
+  readAccountSummary,
+  readSession,
+  requestPasswordReset,
+  signInAccount,
+  signOutAccount,
+  signUpAccount,
+  updateAccountPassword
+} from "./accountApi.js";
+import {
   enableAudio,
   getAudioSettings,
   playSound,
@@ -37,6 +47,11 @@ const toast = document.querySelector("#toast");
 const params = new URLSearchParams(window.location.search);
 
 let state = {
+  account: null,
+  accountSummary: null,
+  authChecked: false,
+  authView: params.get("auth") === "reset" ? "reset-password" : "sign-in",
+  authMessage: "",
   view: "landing",
   room: null,
   currentPlayer: null,
@@ -79,7 +94,17 @@ window.addEventListener("appinstalled", () => {
 
 async function boot() {
   registerServiceWorker();
-  if (state.joinCode) {
+  await consumeAuthCallback();
+  try {
+    const session = await readSession();
+    state.account = session.account;
+    state.playerId = state.account?.id || "";
+  } catch {
+    state.account = null;
+  }
+  state.authChecked = true;
+
+  if (state.account && state.joinCode) {
     const room = await readRoom(state.joinCode);
     if (room) {
       state.room = room;
@@ -100,6 +125,10 @@ function render() {
 }
 
 function renderCurrentView() {
+  if (!state.authChecked) return renderAuthLoading();
+  if (state.authView === "reset-password") return renderResetPassword();
+  if (!state.account) return renderAuth();
+  if (state.view === "profile") return renderProfile();
   if (state.view === "create") return renderCreate();
   if (state.view === "join") return renderJoin();
   if (!state.room || !state.currentPlayer) return renderLanding();
@@ -123,12 +152,103 @@ function screenLayout(content) {
 	        <span>${genius ? "Six domains · one crown" : "Big points"}</span>
 	      </div>
 	      ${renderAudioControls()}
+	      ${state.account ? renderAccountBar() : ""}
 	      ${renderConnectionStatus()}
 	      ${state.error ? `<div class="error-banner"><strong>${escapeHtml(getPhrase("errorHelper", state.error))}</strong><span>${escapeHtml(state.error)}</span></div>` : ""}
 	      ${content}
 	    </section>
 	  `;
 	}
+
+function renderAuthLoading() {
+  return `<section class="auth-shell"><p class="eyebrow">Atwix accounts</p><h2>Loading your arena…</h2></section>`;
+}
+
+function renderAuth() {
+  if (state.authView === "sign-up") return renderSignUp();
+  if (state.authView === "forgot") return renderForgotPassword();
+  if (state.authView === "reset-password") return renderResetPassword();
+  if (state.authView === "check-email") return renderCheckEmail();
+  return renderSignIn();
+}
+
+function renderSignIn() {
+  return `
+    <section class="auth-shell">
+      <p class="eyebrow">Account required</p>
+      <h1>Welcome back.</h1>
+      <p class="subtitle">Sign in to play, protect your record, and continue every rivalry.</p>
+      ${state.authMessage ? `<p class="inline-note">${escapeHtml(state.authMessage)}</p>` : ""}
+      <form class="panel form-panel" id="sign-in-form">
+        <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
+        <label><span>Password</span><input name="password" type="password" autocomplete="current-password" required /></label>
+        <button class="primary-button wide" type="submit" ${state.loading ? "disabled" : ""}>Sign In</button>
+      </form>
+      <div class="auth-links">
+        <button class="ghost-button" data-auth-view="forgot">Forgot password?</button>
+        <button class="secondary-button" data-auth-view="sign-up">Create an account</button>
+      </div>
+    </section>`;
+}
+
+function renderSignUp() {
+  return `
+    <section class="auth-shell">
+      <p class="eyebrow">Join the history books</p>
+      <h1>Create account.</h1>
+      <p class="subtitle">Your email stays private. Rivals only see your display name and match record.</p>
+      <form class="panel form-panel" id="sign-up-form">
+        <label><span>Display name</span><input name="displayName" maxlength="28" autocomplete="nickname" placeholder="Mira" required /></label>
+        <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
+        <label><span>Password</span><input name="password" type="password" minlength="8" autocomplete="new-password" required /></label>
+        <button class="primary-button wide" type="submit" ${state.loading ? "disabled" : ""}>Create Account</button>
+      </form>
+      <button class="ghost-button wide" data-auth-view="sign-in">Already have an account? Sign in</button>
+    </section>`;
+}
+
+function renderForgotPassword() {
+  return `
+    <section class="auth-shell">
+      <p class="eyebrow">Password recovery</p>
+      <h2>Get a reset link.</h2>
+      <form class="panel form-panel" id="forgot-form">
+        <label><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
+        <button class="primary-button wide" type="submit">Send Reset Email</button>
+      </form>
+      <button class="ghost-button wide" data-auth-view="sign-in">Back to sign in</button>
+    </section>`;
+}
+
+function renderResetPassword() {
+  return `
+    <section class="auth-shell">
+      <p class="eyebrow">Choose a new password</p>
+      <h2>Secure your account.</h2>
+      <form class="panel form-panel" id="reset-password-form">
+        <label><span>New password</span><input name="password" type="password" minlength="8" autocomplete="new-password" required /></label>
+        <button class="primary-button wide" type="submit">Update Password</button>
+      </form>
+    </section>`;
+}
+
+function renderCheckEmail() {
+  return `
+    <section class="auth-shell">
+      <p class="eyebrow">One final step</p>
+      <h1>Check your email.</h1>
+      <p class="subtitle">Open the confirmation link, then Atwix will sign you in and begin keeping your history.</p>
+      <button class="secondary-button wide" data-auth-view="sign-in">Back to Sign In</button>
+    </section>`;
+}
+
+function renderAccountBar() {
+  return `
+    <nav class="account-bar" aria-label="Account">
+      <button class="account-identity" data-view="profile"><span>${escapeHtml(state.account.displayName)}</span><small>${state.account.totalWins} wins · ${state.account.totalLosses} losses</small></button>
+      <button class="ghost-button" id="sign-out">Sign Out</button>
+    </nav>`;
+}
 
 function renderConnectionStatus() {
   if (!state.room || state.connection === "idle") return "";
@@ -160,6 +280,7 @@ function renderLanding() {
       <p class="eyebrow">Party trivia for fast friends.</p>
       <h1>Atwix Trivia</h1>
       <p class="subtitle">${escapeHtml(getPhrase("landingSubtitle", "home"))}</p>
+      <p class="signed-in-note">Playing as <strong>${escapeHtml(state.account.displayName)}</strong>. Every completed game now counts.</p>
       <div class="mode-launch-grid">
         <button class="mode-launch genius-launch" data-view="create" data-create-mode="Genius">
           <span class="mode-launch-badge">New · Expert challenge</span>
@@ -201,10 +322,7 @@ function renderCreate() {
           <span><strong>Classic</strong><small>Flexible party trivia with custom categories</small></span>
         </label>
       </fieldset>
-      <label>
-        <span>Your display name</span>
-        <input name="displayName" autocomplete="nickname" maxlength="28" placeholder="Mira" value="${escapeAttr(state.createName)}" required />
-      </label>
+      <p class="identity-lock">Host account: <strong>${escapeHtml(state.account.displayName)}</strong></p>
       <button class="primary-button wide ${genius ? "genius-create-button" : ""}" type="submit" ${state.loading ? "disabled" : ""}>${genius ? "Create Genius Room" : "Create Classic Room"}</button>
     </form>
   `;
@@ -222,10 +340,7 @@ function renderJoin() {
     </div>
     ${state.room && !roomIsFull ? `<p class="inline-note">Joining room <strong>${escapeHtml(state.room.code)}</strong>. ${escapeHtml(getPhrase("lobbyHelper", `join:${state.room.code}`))}</p>` : ""}
     <form class="panel form-panel" id="join-form">
-      <label>
-        <span>Your display name</span>
-        <input name="displayName" autocomplete="nickname" maxlength="28" placeholder="Noah" value="${escapeAttr(state.joinName)}" ${roomIsFull ? "disabled" : "required"} />
-      </label>
+      <p class="identity-lock">Joining as <strong>${escapeHtml(state.account.displayName)}</strong></p>
       <label>
         <span>Room code</span>
         <input name="roomCode" class="code-input" maxlength="5" placeholder="A8K2P" value="${escapeAttr(state.joinCode)}" ${roomIsFull ? "disabled" : "required"} />
@@ -299,6 +414,7 @@ function renderLobby() {
       </div>
       ${isHost ? renderSettingsForm() : `<p class="helper">${escapeHtml(getPhrase("waitingForHost", state.room.code))}</p>`}
     </section>
+    ${renderRoomRivalries()}
     ${genius ? `
       <section class="genius-brief">
         <p class="eyebrow">Genius mode armed</p>
@@ -310,6 +426,52 @@ function renderLobby() {
       </section>
     ` : ""}
   `;
+}
+
+function renderRoomRivalries() {
+  const records = state.room?.rivalries || [];
+  if (!records.length) {
+    return state.room?.players?.length > 1
+      ? `<section class="panel rivalry-panel"><div class="section-title"><h3>Rivalry history</h3><span>First meeting</span></div><p class="helper">No previous results between these accounts. Tonight starts the record.</p></section>`
+      : "";
+  }
+  return `
+    <section class="panel rivalry-panel">
+      <div class="section-title"><h3>Rivalry history</h3><span>Permanent record</span></div>
+      <div class="rivalry-list">${records.map(renderRivalryCard).join("")}</div>
+    </section>`;
+}
+
+function renderRivalryCard(record) {
+  const lowLeads = record.lowWins > record.highWins;
+  const highLeads = record.highWins > record.lowWins;
+  const headline = lowLeads
+    ? `${record.lowName} leads ${record.highName}`
+    : highLeads
+      ? `${record.highName} leads ${record.lowName}`
+      : `${record.lowName} and ${record.highName} are level`;
+  const streakName = record.streakWinnerId === record.accountLow ? record.lowName : record.streakWinnerId === record.accountHigh ? record.highName : "";
+  return `
+    <article class="rivalry-card">
+      <div><strong>${escapeHtml(headline)}</strong><span>${record.lowWins}–${record.highWins}${record.draws ? ` · ${record.draws} draw${record.draws === 1 ? "" : "s"}` : ""}</span></div>
+      ${streakName && record.streakCount > 1 ? `<small>${escapeHtml(streakName)} has won ${record.streakCount} straight</small>` : `<small>${record.lastPlayedAt ? `Last played ${escapeHtml(formatHistoryDate(record.lastPlayedAt))}` : "History begins now"}</small>`}
+    </article>`;
+}
+
+function renderProfile() {
+  const account = state.accountSummary?.account || state.account;
+  const rivalries = state.accountSummary?.rivalries || [];
+  const winRate = account.totalGames ? Math.round((account.totalWins / account.totalGames) * 100) : 0;
+  return `
+    <div class="topbar"><button class="ghost-button icon-button" data-view="landing" aria-label="Back">‹</button><div><p class="eyebrow">Career record</p><h2>${escapeHtml(account.displayName)}</h2></div></div>
+    <section class="profile-hero">
+      <div><span>Games</span><strong>${account.totalGames}</strong></div>
+      <div><span>Wins</span><strong>${account.totalWins}</strong></div>
+      <div><span>Losses</span><strong>${account.totalLosses}</strong></div>
+      <div><span>Win rate</span><strong>${winRate}%</strong></div>
+    </section>
+    <section class="panel"><div class="section-title"><h3>Mode trophies</h3><span>${account.totalDraws} draws</span></div><div class="points-list"><div><span>Classic wins</span><strong>${account.classicWins}</strong></div><div><span>Genius wins</span><strong>${account.geniusWins}</strong></div></div></section>
+    <section class="panel"><div class="section-title"><h3>Your rivalries</h3><span>${rivalries.length}</span></div>${rivalries.length ? `<div class="rivalry-list">${rivalries.map(renderRivalryCard).join("")}</div>` : `<p class="helper">Complete a game against another account to begin a rivalry.</p>`}</section>`;
 }
 
 function renderSettingsForm() {
@@ -569,6 +731,7 @@ function renderFinal() {
       <p class="eyebrow">${isGeniusMode() ? "The gauntlet is complete" : "Final results"}</p>
       <h1>${winner ? `${escapeHtml(winner.displayName)} ${isGeniusMode() ? "is the Genius!" : "wins!"}` : "Game over!"}</h1>
       <p>${escapeHtml(winnerLine)}</p>
+      <small>${state.room.historySaved ? "Career and rivalry records updated." : "Career record will retry when the history service is available."}</small>
     </section>
     <section class="leaderboard-list">
       ${leaderboard.map((entry) => renderLeaderboardEntry(entry)).join("")}
@@ -760,16 +923,163 @@ function renderAwardCards(awards) {
   `).join("");
 }
 
+async function consumeAuthCallback() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  if (!accessToken || !refreshToken) return;
+  try {
+    const result = await exchangeAuthTokens(accessToken, refreshToken);
+    state.account = result.account;
+    state.authView = params.get("auth") === "reset" || hash.get("type") === "recovery" ? "reset-password" : "sign-in";
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    if (state.authView !== "reset-password") clearAuthFromUrl();
+  }
+}
+
+async function handleSignIn(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await safely(async () => {
+    state.loading = true;
+    render();
+    const result = await signInAccount(form.get("email"), form.get("password"));
+    state.account = result.account;
+    state.playerId = result.account.id;
+    state.authMessage = "";
+    state.view = "landing";
+    if (state.joinCode) {
+      const room = await readRoom(state.joinCode);
+      if (room) {
+        state.room = room;
+        state.currentPlayer = recoverPlayer(room, state.playerId);
+        state.view = state.currentPlayer ? "room" : "join";
+        connectRoom(room.code);
+      }
+    }
+  });
+  state.loading = false;
+  render();
+}
+
+async function handleSignUp(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await safely(async () => {
+    state.loading = true;
+    render();
+    const result = await signUpAccount(form.get("email"), form.get("password"), form.get("displayName"), authReturnTo());
+    if (result.account) {
+      state.account = result.account;
+      state.playerId = result.account.id;
+      state.view = "landing";
+    } else {
+      state.authView = "check-email";
+      state.authMessage = result.message;
+    }
+  });
+  state.loading = false;
+  render();
+}
+
+async function handleForgotPassword(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await safely(async () => {
+    const result = await requestPasswordReset(form.get("email"), authReturnTo());
+    state.authMessage = result.message;
+    state.authView = "sign-in";
+  });
+  render();
+}
+
+async function handleResetPassword(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await safely(async () => {
+    const result = await updateAccountPassword(form.get("password"));
+    state.authMessage = result.message;
+    state.authView = "sign-in";
+    const session = await readSession();
+    state.account = session.account;
+    state.playerId = session.account?.id || "";
+    state.view = "landing";
+    clearAuthFromUrl();
+  });
+  render();
+}
+
+async function handleSignOut() {
+  await safely(async () => {
+    await signOutAccount();
+    state.unsubscribe?.();
+    clearInterval(state.timer);
+    stopAllAudio();
+    state.account = null;
+    state.accountSummary = null;
+    state.room = null;
+    state.currentPlayer = null;
+    state.playerId = "";
+    state.view = "landing";
+    state.authView = "sign-in";
+    history.replaceState({}, "", window.location.pathname);
+  });
+  render();
+}
+
+async function loadAccountSummary() {
+  try {
+    state.accountSummary = await readAccountSummary();
+    state.account = state.accountSummary.account;
+  } catch (error) {
+    state.error = error.message;
+  }
+}
+
+function authReturnTo() {
+  const target = new URL(window.location.href);
+  target.hash = "";
+  target.searchParams.delete("auth");
+  target.searchParams.delete("player");
+  return `${target.pathname}${target.search}`;
+}
+
+function clearAuthFromUrl() {
+  const target = new URL(window.location.href);
+  target.hash = "";
+  target.searchParams.delete("auth");
+  target.searchParams.delete("code");
+  target.searchParams.delete("token_hash");
+  target.searchParams.delete("type");
+  history.replaceState({}, "", `${target.pathname}${target.search}`);
+}
+
 function bindActions() {
-  document.querySelectorAll("[data-view]").forEach((button) => {
+  document.querySelectorAll("[data-auth-view]").forEach((button) => {
     button.addEventListener("click", () => {
+      state.authView = button.dataset.authView;
+      state.authMessage = "";
+      state.error = "";
+      render();
+    });
+  });
+  document.querySelector("#sign-in-form")?.addEventListener("submit", handleSignIn);
+  document.querySelector("#sign-up-form")?.addEventListener("submit", handleSignUp);
+  document.querySelector("#forgot-form")?.addEventListener("submit", handleForgotPassword);
+  document.querySelector("#reset-password-form")?.addEventListener("submit", handleResetPassword);
+  document.querySelector("#sign-out")?.addEventListener("click", handleSignOut);
+
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", async () => {
       if (button.dataset.createMode) state.createMode = button.dataset.createMode;
       state.unsubscribe?.();
       clearInterval(state.timer);
       state.view = button.dataset.view;
       state.room = null;
       state.currentPlayer = null;
-      state.playerId = "";
+      state.playerId = state.account?.id || "";
       state.error = "";
 	      state.pendingAnswerKey = "";
 	      state.localChoices.clear();
@@ -777,6 +1087,7 @@ function bindActions() {
 	      state.connection = "idle";
 	      stopAllAudio();
       history.replaceState({}, "", window.location.pathname);
+      if (state.view === "profile") await loadAccountSummary();
       render();
     });
   });
@@ -786,9 +1097,6 @@ function bindActions() {
   });
 
   document.querySelector("#create-form")?.addEventListener("submit", handleCreate);
-  document.querySelector("#create-form input[name='displayName']")?.addEventListener("input", (event) => {
-    state.createName = event.target.value;
-  });
   document.querySelectorAll("#create-form input[name='gameMode']").forEach((input) => {
     input.addEventListener("change", (event) => {
       state.createMode = event.target.value;
@@ -796,9 +1104,6 @@ function bindActions() {
     });
   });
   document.querySelector("#join-form")?.addEventListener("submit", handleJoin);
-  document.querySelector("#join-form input[name='displayName']")?.addEventListener("input", (event) => {
-    state.joinName = event.target.value;
-  });
   document.querySelector("#join-form input[name='roomCode']")?.addEventListener("input", (event) => {
     state.joinCode = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     event.target.value = state.joinCode;
@@ -869,7 +1174,7 @@ async function handleCreate(event) {
   await safely(async () => {
     state.loading = true;
     render();
-    const result = await createRoom(form.get("displayName"));
+    const result = await createRoom();
     state.room = selectedMode === "Genius"
       ? await updateSettings(result.room.code, result.player.id, {
           gameMode: "Genius",
@@ -881,8 +1186,7 @@ async function handleCreate(event) {
     state.currentPlayer = result.player;
     state.playerId = result.player.id;
     state.view = "room";
-    state.createName = "";
-    history.replaceState({}, "", playerUrl(state.room.code, state.currentPlayer.id));
+    history.replaceState({}, "", playerUrl(state.room.code));
     connectRoom(state.room.code);
   });
   state.loading = false;
@@ -895,14 +1199,13 @@ async function handleJoin(event) {
   await safely(async () => {
     state.loading = true;
     render();
-    const result = await joinRoom(form.get("roomCode"), form.get("displayName"), state.playerId || null);
+    const result = await joinRoom(form.get("roomCode"));
     state.room = result.room;
     state.currentPlayer = result.player;
     state.playerId = result.player.id;
     state.view = "room";
-    state.joinName = "";
     state.joinCode = state.room.code;
-    history.replaceState({}, "", playerUrl(state.room.code, state.currentPlayer.id));
+    history.replaceState({}, "", playerUrl(state.room.code));
     connectRoom(state.room.code);
   });
   state.loading = false;
@@ -1196,8 +1499,14 @@ function showToast(message) {
   setTimeout(() => toast.classList.remove("show"), 1800);
 }
 
-function playerUrl(code, playerId) {
-  return `?room=${encodeURIComponent(code)}&player=${encodeURIComponent(playerId)}`;
+function playerUrl(code) {
+  return `?room=${encodeURIComponent(code)}`;
+}
+
+function formatHistoryDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
 function escapeHtml(value) {

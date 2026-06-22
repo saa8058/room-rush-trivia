@@ -6,6 +6,7 @@ const sources = [
   "src/questions.js",
   "src/microcopy.js",
   "src/audio.js",
+  "src/accountApi.js",
   "src/storage.js",
   "src/app.js"
 ];

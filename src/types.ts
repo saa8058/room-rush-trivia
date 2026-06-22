@@ -27,6 +27,33 @@ export type Player = {
   joinedAt: number;
 };
 
+export type Account = {
+  id: string;
+  email: string;
+  displayName: string;
+  totalGames: number;
+  totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
+  classicWins: number;
+  geniusWins: number;
+  emailConfirmed: boolean;
+};
+
+export type RivalryRecord = {
+  accountLow: string;
+  lowName: string;
+  accountHigh: string;
+  highName: string;
+  lowWins: number;
+  highWins: number;
+  draws: number;
+  lastWinnerId: string | null;
+  lastPlayedAt: string | null;
+  streakWinnerId: string | null;
+  streakCount: number;
+};
+
 export type GameSettings = {
   gameMode: GameMode;
   roundCount: 5 | 10 | 15 | 20 | 30;
@@ -128,6 +155,8 @@ export type Room = {
     roundIndex: number;
     createdAt: number;
   }>;
+  rivalries: RivalryRecord[];
+  historySaved: boolean;
   createdAt: number;
   updatedAt: number;
 };
